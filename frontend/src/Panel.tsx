@@ -8,7 +8,6 @@ import {
   Badge,
   Button,
   Group,
-  List,
   Loader,
   Stack,
   Table,
@@ -327,29 +326,6 @@ function SOLineItemImportPanel({
               <Text>Created: {lastResult.created_count || 0}</Text>
             )}
             <Text>Skipped: {lastResult.skipped_count || 0}</Text>
-
-            {Array.isArray(lastResult.unresolved) &&
-              lastResult.unresolved.length > 0 && (
-                <>
-                  <Text fw={600}>Unresolved rows</Text>
-                  <List spacing='xs' size='sm'>
-                    {lastResult.unresolved
-                      .slice(0, DISPLAY_ROW_LIMIT)
-                      .map((item: any, idx: number) => (
-                        <List.Item key={`unresolved-${idx}`}>
-                          Row {item.row}: {item.product_name || '(empty)'} [
-                          {item.reason}]
-                        </List.Item>
-                      ))}
-                  </List>
-                  {lastResult.unresolved.length > DISPLAY_ROW_LIMIT && (
-                    <Text size='sm' c='dimmed'>
-                      Showing first {DISPLAY_ROW_LIMIT} unresolved rows of{' '}
-                      {lastResult.unresolved.length}
-                    </Text>
-                  )}
-                </>
-              )}
 
             {lastResult.dry_run &&
               Array.isArray(lastResult.preview_rows) &&

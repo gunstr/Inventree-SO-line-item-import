@@ -19,6 +19,8 @@ import { notifications } from '@mantine/notifications';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
 
+const DISPLAY_ROW_LIMIT = 50;
+
 /**
  * Render a custom panel with the provided context.
  * Refer to the InvenTree documentation for the context interface
@@ -332,7 +334,7 @@ function SOLineItemImportPanel({
                   <Text fw={600}>Unresolved rows</Text>
                   <List spacing='xs' size='sm'>
                     {lastResult.unresolved
-                      .slice(0, 10)
+                      .slice(0, DISPLAY_ROW_LIMIT)
                       .map((item: any, idx: number) => (
                         <List.Item key={`unresolved-${idx}`}>
                           Row {item.row}: {item.product_name || '(empty)'} [
@@ -340,6 +342,12 @@ function SOLineItemImportPanel({
                         </List.Item>
                       ))}
                   </List>
+                  {lastResult.unresolved.length > DISPLAY_ROW_LIMIT && (
+                    <Text size='sm' c='dimmed'>
+                      Showing first {DISPLAY_ROW_LIMIT} unresolved rows of{' '}
+                      {lastResult.unresolved.length}
+                    </Text>
+                  )}
                 </>
               )}
 
@@ -361,7 +369,7 @@ function SOLineItemImportPanel({
                     </Table.Thead>
                     <Table.Tbody>
                       {lastResult.preview_rows
-                        .slice(0, 50)
+                        .slice(0, DISPLAY_ROW_LIMIT)
                         .map((item: any, idx: number) => (
                           <Table.Tr key={`preview-${idx}`}>
                             <Table.Td>{item.row ?? '-'}</Table.Td>
@@ -392,9 +400,10 @@ function SOLineItemImportPanel({
                         ))}
                     </Table.Tbody>
                   </Table>
-                  {lastResult.preview_rows.length > 50 && (
+                  {lastResult.preview_rows.length > DISPLAY_ROW_LIMIT && (
                     <Text size='sm' c='dimmed'>
-                      Showing first 50 rows of {lastResult.preview_rows.length}
+                      Showing first {DISPLAY_ROW_LIMIT} rows of{' '}
+                      {lastResult.preview_rows.length}
                     </Text>
                   )}
                 </>

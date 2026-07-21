@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Max
+from django.db.models import Q
 from django.http import JsonResponse
 from django.urls import path, reverse
 
@@ -97,7 +98,10 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
             worksheet.iter_rows(min_row=header_index + 1, values_only=True),
             start=header_index + 1,
         ):
-            product_name = str(row[name_col] if len(row) > name_col else "").strip()
+            raw_product_name = row[name_col] if len(row) > name_col else ""
+            product_name = (
+                "" if raw_product_name is None else str(raw_product_name).strip()
+            )
             quantity_value = row[qty_col] if len(row) > qty_col else None
 
             if not product_name and quantity_value in [None, ""]:
@@ -112,38 +116,60 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
         return entries
 
     def _find_part_for_name(self, product_name: str):
-        """Resolve a salable active part from the provided product name."""
-        part = Part.objects.filter(
-            name__iexact=product_name,
-            salable=True,
-            active=True,
-        ).first()
+        """Resolve a salable part from a part code or part name value."""
+        value = (product_name or "").strip()
+
+        if not value:
+            return None, {
+                "reason": "missing_product_name",
+                "candidates": [],
+            }
+
+        # Prefer exact IPN match first, then exact name match.
+        part = Part.objects.filter(IPN__iexact=value, salable=True).first()
+
+        if not part:
+            part = Part.objects.filter(name__iexact=value, salable=True).first()
+
+        # If part exists but is not salable, report a clearer reason.
+        if not part:
+            non_salable_match = Part.objects.filter(
+                Q(IPN__iexact=value) | Q(name__iexact=value)
+            ).first()
+
+            if non_salable_match and not non_salable_match.salable:
+                return None, {
+                    "reason": "part_not_salable",
+                    "candidates": [],
+                }
 
         if part:
             return part, None
 
         candidates = list(
             Part.objects.filter(
-                name__icontains=product_name,
+                Q(IPN__icontains=value) | Q(name__icontains=value),
                 salable=True,
-                active=True,
             )
             .order_by("name")
-            .values_list("name", flat=True)[:5]
+            .values_list("IPN", "name")[:5]
         )
 
         if len(candidates) == 1:
-            part = Part.objects.filter(
-                name__iexact=candidates[0],
-                salable=True,
-                active=True,
-            ).first()
+            ipn, name = candidates[0]
+            part = (
+                Part.objects.filter(salable=True)
+                .filter(Q(IPN=ipn) | Q(name=name))
+                .first()
+            )
             return part, None
 
         if len(candidates) > 1:
             return None, {
                 "reason": "ambiguous_product_name",
-                "candidates": candidates,
+                "candidates": [
+                    f"{ipn} | {name}" if ipn else name for ipn, name in candidates
+                ],
             }
 
         return None, {
@@ -225,6 +251,16 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
                     })
                     continue
 
+                if quantity_raw in [None, "", "None"]:
+                    skipped_count += 1
+                    unresolved.append({
+                        "row": row,
+                        "product_name": product_name,
+                        "reason": "missing_quantity",
+                        "candidates": [],
+                    })
+                    continue
+
                 try:
                     quantity = Decimal(str(quantity_raw))
                 except (InvalidOperation, TypeError):
@@ -264,7 +300,7 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
                     part=part,
                     quantity=quantity,
                     line=str(next_line),
-                    reference=product_name,
+                    reference="Imported item",
                 )
 
                 try:

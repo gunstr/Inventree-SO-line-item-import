@@ -80,9 +80,36 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
         def norm(value):
             return str(value or "").strip().lower()
 
+        def normalize_product_cell(value):
+            """Normalize product cell content to lookup-friendly text.
+
+            Example:
+            "EX Extrusion:MT-EX-06-06-120-51" -> "MT-EX-06-06-120-51"
+            """
+            text = "" if value is None else str(value).strip()
+
+            if not text:
+                return ""
+
+            if ":" in text:
+                # Use the right-most segment so prefixed labels are ignored.
+                suffix = text.rsplit(":", 1)[1].strip()
+                if suffix:
+                    return suffix
+
+            return text
+
         normalized = [norm(cell) for cell in header_row]
 
-        name_aliases = {"product", "product name", "part", "part name", "name"}
+        name_aliases = {
+            "product",
+            "product/service",
+            "product / service",
+            "product name",
+            "part",
+            "part name",
+            "name",
+        }
         qty_aliases = {"qty", "quantity", "order qty", "ordered quantity"}
 
         name_col = next(
@@ -105,9 +132,7 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
             start=header_index + 1,
         ):
             raw_product_name = row[name_col] if len(row) > name_col else ""
-            product_name = (
-                "" if raw_product_name is None else str(raw_product_name).strip()
-            )
+            product_name = normalize_product_cell(raw_product_name)
             quantity_value = row[qty_col] if len(row) > qty_col else None
 
             if not product_name and quantity_value in [None, ""]:

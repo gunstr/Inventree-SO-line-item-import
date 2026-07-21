@@ -5,11 +5,13 @@ import {
 } from '@inventreedb/ui';
 import {
   Alert,
+  Badge,
   Button,
   Group,
   List,
   Loader,
   Stack,
+  Table,
   Text,
   Title
 } from '@mantine/core';
@@ -86,6 +88,9 @@ function SOLineItemImportPanel({
   const [pendingMode, setPendingMode] = useState<'dry-run' | 'import'>(
     'import'
   );
+  const [previewExpired, setPreviewExpired] = useState(false);
+  const hasPreviewResult = Boolean(lastResult?.dry_run);
+  const canImport = Boolean(lastResult?.dry_run && lastResult?.preview_token);
 
   function getCsrfToken(): string {
     const cookieValue = document.cookie
@@ -96,7 +101,9 @@ function SOLineItemImportPanel({
     return cookieValue || '';
   }
 
-  async function runImport(file: File, mode: 'dry-run' | 'import') {
+  async function runImport(file: File | null, mode: 'dry-run' | 'import') {
+    setPendingMode(mode);
+
     if (!salesOrderId) {
       notifications.show({
         title: 'Invalid context',
@@ -116,9 +123,25 @@ function SOLineItemImportPanel({
     }
 
     const payload = new FormData();
-    payload.append('file', file);
     payload.append('sales_order_id', String(salesOrderId));
     payload.append('dry_run', String(mode === 'dry-run'));
+
+    if (mode === 'dry-run') {
+      setPreviewExpired(false);
+
+      if (!file) {
+        notifications.show({
+          title: 'No file selected',
+          message: 'Please select an Excel file to preview.',
+          color: 'red'
+        });
+        return;
+      }
+
+      payload.append('file', file);
+    } else if (lastResult?.preview_token) {
+      payload.append('preview_token', String(lastResult.preview_token));
+    }
 
     setUploading(true);
 
@@ -177,6 +200,7 @@ function SOLineItemImportPanel({
       }
 
       setLastResult(data);
+      setPreviewExpired(false);
 
       notifications.show({
         title: mode === 'dry-run' ? 'Preview completed' : 'Import completed',
@@ -187,9 +211,22 @@ function SOLineItemImportPanel({
         color: 'green'
       });
     } catch (error: any) {
+      const message = String(error?.message || error);
+
+      if (
+        mode === 'import' &&
+        (message.includes('Preview token is invalid or has expired') ||
+          message.includes('Preview token does not match this sales order'))
+      ) {
+        setPreviewExpired(true);
+        setLastResult((prev: any) =>
+          prev ? { ...prev, preview_token: null } : prev
+        );
+      }
+
       notifications.show({
         title: 'Import failed',
-        message: String(error?.message || error),
+        message,
         color: 'red'
       });
     } finally {
@@ -238,23 +275,43 @@ function SOLineItemImportPanel({
           {uploading && pendingMode === 'dry-run' ? (
             <Loader size='xs' />
           ) : (
-            'Preview (Dry Run)'
+            'Upload Excel'
           )}
         </Button>
         <Button
           onClick={() => {
-            setPendingMode('import');
-            fileInputRef.current?.click();
+            void runImport(null, 'import');
           }}
-          disabled={!salesOrderId || uploading}
+          disabled={!salesOrderId || uploading || !canImport}
         >
           {uploading && pendingMode === 'import' ? (
             <Loader size='xs' />
           ) : (
-            'Import from Excel'
+            'Add to SO'
           )}
         </Button>
       </Group>
+
+      <Badge
+        color={canImport ? 'green' : previewExpired ? 'red' : 'gray'}
+        variant='light'
+      >
+        {canImport
+          ? 'Preview ready'
+          : previewExpired
+            ? 'Preview expired'
+            : 'Preview required'}
+      </Badge>
+
+      {!canImport && (
+        <Text size='sm' c='dimmed'>
+          {previewExpired
+            ? 'Preview expired. Upload Excel again to refresh the preview before adding to SO.'
+            : hasPreviewResult
+              ? 'Run Upload Excel again to generate a valid preview token before adding to SO.'
+              : 'Run Upload Excel first to enable adding line items to this sales order.'}
+        </Text>
+      )}
 
       {lastResult && (
         <Alert
@@ -283,6 +340,63 @@ function SOLineItemImportPanel({
                         </List.Item>
                       ))}
                   </List>
+                </>
+              )}
+
+            {lastResult.dry_run &&
+              Array.isArray(lastResult.preview_rows) &&
+              lastResult.preview_rows.length > 0 && (
+                <>
+                  <Text fw={600}>Preview rows</Text>
+                  <Table striped withTableBorder withColumnBorders>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Row</Table.Th>
+                        <Table.Th>Status</Table.Th>
+                        <Table.Th>Input</Table.Th>
+                        <Table.Th>Matched Part</Table.Th>
+                        <Table.Th>Quantity</Table.Th>
+                        <Table.Th>Reason</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {lastResult.preview_rows
+                        .slice(0, 50)
+                        .map((item: any, idx: number) => (
+                          <Table.Tr key={`preview-${idx}`}>
+                            <Table.Td>{item.row ?? '-'}</Table.Td>
+                            <Table.Td>
+                              <Badge
+                                color={
+                                  item.status === 'ready' ||
+                                  item.status === 'imported'
+                                    ? 'green'
+                                    : item.status === 'error'
+                                      ? 'red'
+                                      : 'yellow'
+                                }
+                                variant='light'
+                              >
+                                {item.status || 'unknown'}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td>{item.input || '-'}</Table.Td>
+                            <Table.Td>
+                              {item.matched_ipn || item.matched_name
+                                ? `${item.matched_ipn || ''}${item.matched_ipn && item.matched_name ? ' | ' : ''}${item.matched_name || ''}`
+                                : '-'}
+                            </Table.Td>
+                            <Table.Td>{item.quantity || '-'}</Table.Td>
+                            <Table.Td>{item.reason || '-'}</Table.Td>
+                          </Table.Tr>
+                        ))}
+                    </Table.Tbody>
+                  </Table>
+                  {lastResult.preview_rows.length > 50 && (
+                    <Text size='sm' c='dimmed'>
+                      Showing first 50 rows of {lastResult.preview_rows.length}
+                    </Text>
+                  )}
                 </>
               )}
           </Stack>

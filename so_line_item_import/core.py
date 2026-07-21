@@ -146,32 +146,6 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
         if part:
             return part, None
 
-        candidates = list(
-            Part.objects.filter(
-                Q(IPN__icontains=value) | Q(name__icontains=value),
-                salable=True,
-            )
-            .order_by("name")
-            .values_list("IPN", "name")[:5]
-        )
-
-        if len(candidates) == 1:
-            ipn, name = candidates[0]
-            part = (
-                Part.objects.filter(salable=True)
-                .filter(Q(IPN=ipn) | Q(name=name))
-                .first()
-            )
-            return part, None
-
-        if len(candidates) > 1:
-            return None, {
-                "reason": "ambiguous_product_name",
-                "candidates": [
-                    f"{ipn} | {name}" if ipn else name for ipn, name in candidates
-                ],
-            }
-
         return None, {
             "reason": "part_not_found",
             "candidates": [],

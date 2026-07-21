@@ -25,8 +25,51 @@ function SOLineItemImportPanel({
   }, [context.model, context.id]);
 
   const importUrl = useMemo(() => {
-    return String(context.instance?.import_url || '');
-  }, [context.instance]);
+    return String(context.context?.import_url || '');
+  }, [context.context]);
+
+  const resolvedImportUrl = useMemo(() => {
+    if (!importUrl) {
+      return '';
+    }
+
+    try {
+      return new URL(importUrl, window.location.origin).toString();
+    } catch {
+      return importUrl;
+    }
+  }, [importUrl]);
+
+  const backendOrigin = useMemo(() => {
+    const apiBase = String((context.api as any)?.defaults?.baseURL || '');
+
+    if (apiBase) {
+      try {
+        return new URL(apiBase, window.location.origin).origin;
+      } catch {
+        // Continue with fallback strategies.
+      }
+    }
+
+    const hostFromContext = String(context.host || '').trim();
+
+    if (hostFromContext) {
+      try {
+        if (
+          hostFromContext.startsWith('http://') ||
+          hostFromContext.startsWith('https://')
+        ) {
+          return new URL(hostFromContext).origin;
+        }
+
+        return new URL(`http://${hostFromContext}`).origin;
+      } catch {
+        // Continue with fallback strategies.
+      }
+    }
+
+    return window.location.origin;
+  }, [context.api, context.host]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -51,7 +94,7 @@ function SOLineItemImportPanel({
       return;
     }
 
-    if (!importUrl) {
+    if (!resolvedImportUrl) {
       notifications.show({
         title: 'Plugin setup issue',
         message: 'Import endpoint URL is missing in panel context',
@@ -67,7 +110,17 @@ function SOLineItemImportPanel({
     setUploading(true);
 
     try {
-      const response = await fetch(importUrl, {
+      const endpoint = (() => {
+        try {
+          const path = new URL(resolvedImportUrl, window.location.origin)
+            .pathname;
+          return `${backendOrigin}${path}`;
+        } catch {
+          return `${backendOrigin}/plugin/so-line-item-import/import/so-lines/`;
+        }
+      })();
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         body: payload,
         credentials: 'include',
@@ -76,10 +129,38 @@ function SOLineItemImportPanel({
         }
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get('content-type') || '';
+      const responseText = await response.text();
+      let data: any = null;
+
+      if (responseText) {
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          data = null;
+        }
+      }
+
+      if (response.redirected) {
+        throw new Error(
+          'Request was redirected. Please sign in again and retry.'
+        );
+      }
 
       if (!response.ok) {
-        throw new Error(data?.detail || 'Import failed');
+        const fallback = responseText
+          ? responseText.slice(0, 200)
+          : `${response.status} ${response.statusText}`;
+
+        const detail = data?.detail || fallback || 'Import failed';
+
+        throw new Error(`${String(detail)} (URL: ${endpoint})`);
+      }
+
+      if (!contentType.includes('application/json') || !data) {
+        throw new Error(
+          `Import endpoint returned an unexpected response format (URL: ${endpoint}).`
+        );
       }
 
       setLastResult(data);

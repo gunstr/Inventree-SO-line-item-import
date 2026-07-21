@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Max
 from django.http import JsonResponse
-from django.urls import path
+from django.urls import path, reverse
 
 from order.models import SalesOrder, SalesOrderLineItem
 from part.models import Part
@@ -310,7 +310,7 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
                     "Panel.js:RenderSOLineItemImportPanel"
                 ),
                 "context": {
-                    "import_url": f"{self.base_url}import/so-lines/",
+                    "import_url": reverse(f"plugin:{self.slug}:import-so-lines"),
                 },
             })
 

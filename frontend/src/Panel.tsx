@@ -3,7 +3,16 @@ import {
   type InvenTreePluginContext,
   ModelType
 } from '@inventreedb/ui';
-import { Alert, Button, List, Loader, Stack, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Group,
+  List,
+  Loader,
+  Stack,
+  Text,
+  Title
+} from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
@@ -74,6 +83,9 @@ function SOLineItemImportPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
+  const [pendingMode, setPendingMode] = useState<'dry-run' | 'import'>(
+    'import'
+  );
 
   function getCsrfToken(): string {
     const cookieValue = document.cookie
@@ -84,7 +96,7 @@ function SOLineItemImportPanel({
     return cookieValue || '';
   }
 
-  async function runImport(file: File) {
+  async function runImport(file: File, mode: 'dry-run' | 'import') {
     if (!salesOrderId) {
       notifications.show({
         title: 'Invalid context',
@@ -106,6 +118,7 @@ function SOLineItemImportPanel({
     const payload = new FormData();
     payload.append('file', file);
     payload.append('sales_order_id', String(salesOrderId));
+    payload.append('dry_run', String(mode === 'dry-run'));
 
     setUploading(true);
 
@@ -166,8 +179,11 @@ function SOLineItemImportPanel({
       setLastResult(data);
 
       notifications.show({
-        title: 'Import completed',
-        message: `Created ${data.created_count || 0} line items`,
+        title: mode === 'dry-run' ? 'Preview completed' : 'Import completed',
+        message:
+          mode === 'dry-run'
+            ? `Would create ${data.would_create_count || 0} line items`
+            : `Created ${data.created_count || 0} line items`,
         color: 'green'
       });
     } catch (error: any) {
@@ -204,23 +220,53 @@ function SOLineItemImportPanel({
             return;
           }
 
-          void runImport(file);
+          void runImport(file, pendingMode);
 
           event.currentTarget.value = '';
         }}
       />
 
-      <Button
-        onClick={() => fileInputRef.current?.click()}
-        disabled={!salesOrderId || uploading}
-      >
-        {uploading ? <Loader size='xs' /> : 'Import from Excel'}
-      </Button>
+      <Group>
+        <Button
+          variant='light'
+          onClick={() => {
+            setPendingMode('dry-run');
+            fileInputRef.current?.click();
+          }}
+          disabled={!salesOrderId || uploading}
+        >
+          {uploading && pendingMode === 'dry-run' ? (
+            <Loader size='xs' />
+          ) : (
+            'Preview (Dry Run)'
+          )}
+        </Button>
+        <Button
+          onClick={() => {
+            setPendingMode('import');
+            fileInputRef.current?.click();
+          }}
+          disabled={!salesOrderId || uploading}
+        >
+          {uploading && pendingMode === 'import' ? (
+            <Loader size='xs' />
+          ) : (
+            'Import from Excel'
+          )}
+        </Button>
+      </Group>
 
       {lastResult && (
-        <Alert color='green' title='Import Summary'>
+        <Alert
+          color='green'
+          title={lastResult.dry_run ? 'Preview Summary' : 'Import Summary'}
+        >
           <Stack gap='xs'>
-            <Text>Created: {lastResult.created_count || 0}</Text>
+            {lastResult.dry_run ? (
+              <Text>Would Create: {lastResult.would_create_count || 0}</Text>
+            ) : (
+              <Text>Created: {lastResult.created_count || 0}</Text>
+            )}
             <Text>Skipped: {lastResult.skipped_count || 0}</Text>
 
             {Array.isArray(lastResult.unresolved) &&

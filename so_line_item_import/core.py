@@ -176,6 +176,13 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
 
         upload = request.FILES.get("file", None)
 
+        dry_run = str(request.POST.get("dry_run", "false")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
         if upload is None:
             return JsonResponse({"detail": "No file uploaded"}, status=400)
 
@@ -198,6 +205,7 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
             )
 
         created_count = 0
+        would_create_count = 0
         skipped_count = 0
         errors = []
         unresolved = []
@@ -279,9 +287,12 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
 
                 try:
                     line.full_clean()
-                    line.save()
-                    next_line += 1
-                    created_count += 1
+                    would_create_count += 1
+
+                    if not dry_run:
+                        line.save()
+                        next_line += 1
+                        created_count += 1
                 except ValidationError as exc:
                     skipped_count += 1
                     errors.append({
@@ -290,9 +301,14 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
                         "error": str(exc),
                     })
 
+            if dry_run:
+                transaction.set_rollback(True)
+
         return JsonResponse(
             {
+                "dry_run": dry_run,
                 "created_count": created_count,
+                "would_create_count": would_create_count,
                 "skipped_count": skipped_count,
                 "errors": errors,
                 "unresolved": unresolved,

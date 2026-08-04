@@ -1,2 +1,4 @@
 # static files are generated from ../frontend directory
-static
+
+# For GitHub distribution the static files should be included
+# static

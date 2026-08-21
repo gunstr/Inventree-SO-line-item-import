@@ -132,8 +132,6 @@ for display.
 - The preview table renders at most `DISPLAY_ROW_LIMIT` rows; very large
   imports won't show every row in the UI (though all rows are still
   processed).
-- `ExampleModel` in [`models.py`](../so_line_item_import/models.py) is
-  leftover plugin-template boilerplate, unused by the import flow.
 - Re-parsing the file twice (preview + import) is a deliberate trade-off (see
   above) — acceptable for typical spreadsheet sizes, but worth reconsidering
   if very large files become common.

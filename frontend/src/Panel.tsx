@@ -84,14 +84,14 @@ function SOLineItemImportPanel({
   }, [context.api, context.host]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastFileRef = useRef<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
   const [pendingMode, setPendingMode] = useState<'dry-run' | 'import'>(
     'import'
   );
-  const [previewExpired, setPreviewExpired] = useState(false);
   const hasPreviewResult = Boolean(lastResult?.dry_run);
-  const canImport = Boolean(lastResult?.dry_run && lastResult?.preview_token);
+  const canImport = Boolean(hasPreviewResult && lastFileRef.current);
 
   function getCsrfToken(): string {
     const cookieValue = document.cookie
@@ -127,22 +127,24 @@ function SOLineItemImportPanel({
     payload.append('sales_order_id', String(salesOrderId));
     payload.append('dry_run', String(mode === 'dry-run'));
 
-    if (mode === 'dry-run') {
-      setPreviewExpired(false);
-
-      if (!file) {
-        notifications.show({
-          title: 'No file selected',
-          message: 'Please select an Excel file to preview.',
-          color: 'red'
-        });
-        return;
-      }
-
-      payload.append('file', file);
-    } else if (lastResult?.preview_token) {
-      payload.append('preview_token', String(lastResult.preview_token));
+    if (mode === 'dry-run' && file) {
+      lastFileRef.current = file;
     }
+
+    const fileToSend = file ?? lastFileRef.current;
+
+    if (!fileToSend) {
+      notifications.show({
+        title: 'No file selected',
+        message: 'Please select an Excel file to preview.',
+        color: 'red'
+      });
+      return;
+    }
+
+    // Every request (preview or import) resends the file so the backend
+    // always re-parses and re-validates against the current database state.
+    payload.append('file', fileToSend);
 
     setUploading(true);
 
@@ -201,7 +203,6 @@ function SOLineItemImportPanel({
       }
 
       setLastResult(data);
-      setPreviewExpired(false);
 
       notifications.show({
         title: mode === 'dry-run' ? 'Preview completed' : 'Import completed',
@@ -213,17 +214,6 @@ function SOLineItemImportPanel({
       });
     } catch (error: any) {
       const message = String(error?.message || error);
-
-      if (
-        mode === 'import' &&
-        (message.includes('Preview token is invalid or has expired') ||
-          message.includes('Preview token does not match this sales order'))
-      ) {
-        setPreviewExpired(true);
-        setLastResult((prev: any) =>
-          prev ? { ...prev, preview_token: null } : prev
-        );
-      }
 
       notifications.show({
         title: 'Import failed',
@@ -281,7 +271,7 @@ function SOLineItemImportPanel({
         </Button>
         <Button
           onClick={() => {
-            void runImport(null, 'import');
+            void runImport(lastFileRef.current, 'import');
           }}
           disabled={!salesOrderId || uploading || !canImport}
         >
@@ -293,24 +283,23 @@ function SOLineItemImportPanel({
         </Button>
       </Group>
 
-      <Badge
-        color={canImport ? 'green' : previewExpired ? 'red' : 'gray'}
-        variant='light'
-      >
-        {canImport
-          ? 'Preview ready'
-          : previewExpired
-            ? 'Preview expired'
-            : 'Preview required'}
+      <Badge color={canImport ? 'green' : 'gray'} variant='light'>
+        {canImport ? 'Preview ready' : 'Preview required'}
       </Badge>
 
       {!canImport && (
         <Text size='sm' c='dimmed'>
-          {previewExpired
-            ? 'Preview expired. Upload Excel again to refresh the preview before adding to SO.'
-            : hasPreviewResult
-              ? 'Run Upload Excel again to generate a valid preview token before adding to SO.'
-              : 'Run Upload Excel first to enable adding line items to this sales order.'}
+          {hasPreviewResult
+            ? 'The previewed file is no longer available. Run Upload Excel again before adding to SO.'
+            : 'Run Upload Excel first to enable adding line items to this sales order.'}
+        </Text>
+      )}
+
+      {canImport && (
+        <Text size='sm' c='dimmed'>
+          Adding to SO re-validates every row against the current database
+          state, so results may differ slightly if data changed since the
+          preview.
         </Text>
       )}
 

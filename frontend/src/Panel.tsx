@@ -24,6 +24,11 @@ const DISPLAY_ROW_LIMIT = 50;
  * Render a custom panel with the provided context.
  * Refer to the InvenTree documentation for the context interface
  * https://docs.inventree.org/en/latest/plugins/mixins/ui/#plugin-context
+ *
+ * The preview table below is client-side only: no token/cache is kept on the
+ * server. `lastFileRef` holds the originally selected file so that
+ * confirming ("Add to SO") can resend it and have the backend re-validate
+ * everything against current data. See docs/implementation.md for why.
  */
 function SOLineItemImportPanel({
   context

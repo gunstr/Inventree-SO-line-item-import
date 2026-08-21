@@ -1,4 +1,9 @@
-"""Custom parsing and importing of SO line items."""
+"""Custom parsing and importing of SO line items.
+
+See docs/implementation.md for the full design rationale, in particular why
+the preview/import flow re-parses the uploaded file on every request instead
+of caching resolved rows server-side.
+"""
 
 from decimal import Decimal, InvalidOperation
 
@@ -177,7 +182,15 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
         }
 
     def import_sales_order_lines(self, request, *args, **kwargs):
-        """Import sales order line items from an uploaded Excel file."""
+        """Import sales order line items from an uploaded Excel file.
+
+        Handles both preview (``dry_run=true``) and the real import
+        (``dry_run=false``) requests. The uploaded file is required and fully
+        re-parsed/re-validated on every call - there is no server-side
+        preview cache, so a dry run and the confirming import are two
+        independent, consistent passes over the same data (see
+        docs/implementation.md).
+        """
         if request.method != "POST":
             return JsonResponse({"detail": "Method not allowed"}, status=405)
 

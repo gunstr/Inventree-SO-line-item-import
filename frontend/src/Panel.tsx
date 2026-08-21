@@ -283,10 +283,6 @@ function SOLineItemImportPanel({
         </Button>
       </Group>
 
-      <Badge color={canImport ? 'green' : 'gray'} variant='light'>
-        {canImport ? 'Preview ready' : 'Preview required'}
-      </Badge>
-
       {!canImport && (
         <Text size='sm' c='dimmed'>
           {hasPreviewResult

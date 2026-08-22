@@ -1,9 +1,12 @@
-"""Custom parsing and importing of SO line items."""
+"""Custom parsing and importing of SO line items.
+
+See docs/implementation.md for the full design rationale, in particular why
+the preview/import flow re-parses the uploaded file on every request instead
+of caching resolved rows server-side.
+"""
 
 from decimal import Decimal, InvalidOperation
-from uuid import uuid4
 
-from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Max
@@ -17,10 +20,6 @@ from plugin import InvenTreePlugin
 from plugin.mixins import AppMixin, UrlsMixin, UserInterfaceMixin
 
 from . import PLUGIN_VERSION
-
-
-PREVIEW_CACHE_PREFIX = "so_line_item_import_preview"
-PREVIEW_CACHE_TTL_SECONDS = 15 * 60
 
 
 class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin):
@@ -182,31 +181,16 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
             "candidates": [],
         }
 
-    def _preview_cache_key(self, token: str) -> str:
-        """Build cache key for a dry-run preview token."""
-        return f"{PREVIEW_CACHE_PREFIX}:{token}"
-
-    def _store_preview(
-        self, user_id: int, sales_order_id: int, ready_lines: list
-    ) -> str:
-        """Store dry-run preview data and return a short-lived token."""
-        token = uuid4().hex
-        payload = {
-            "user_id": user_id,
-            "sales_order_id": sales_order_id,
-            "ready_lines": ready_lines,
-        }
-        cache.set(self._preview_cache_key(token), payload, PREVIEW_CACHE_TTL_SECONDS)
-        return token
-
-    def _load_preview(self, token: str):
-        """Load dry-run preview data from cache by token."""
-        if not token:
-            return None
-        return cache.get(self._preview_cache_key(token))
-
     def import_sales_order_lines(self, request, *args, **kwargs):
-        """Import sales order line items from an uploaded Excel file."""
+        """Import sales order line items from an uploaded Excel file.
+
+        Handles both preview (``dry_run=true``) and the real import
+        (``dry_run=false``) requests. The uploaded file is required and fully
+        re-parsed/re-validated on every call - there is no server-side
+        preview cache, so a dry run and the confirming import are two
+        independent, consistent passes over the same data (see
+        docs/implementation.md).
+        """
         if request.method != "POST":
             return JsonResponse({"detail": "Method not allowed"}, status=405)
 
@@ -236,125 +220,6 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
             "yes",
             "on",
         }
-        preview_token = str(request.POST.get("preview_token", "")).strip()
-
-        if not dry_run and preview_token:
-            preview = self._load_preview(preview_token)
-
-            if not preview:
-                return JsonResponse(
-                    {"detail": "Preview token is invalid or has expired"}, status=400
-                )
-
-            if preview.get("user_id") != request.user.id:
-                return JsonResponse(
-                    {"detail": "Preview token is not valid for this user"}, status=403
-                )
-
-            if preview.get("sales_order_id") != sales_order.pk:
-                return JsonResponse(
-                    {"detail": "Preview token does not match this sales order"},
-                    status=400,
-                )
-
-            ready_lines = preview.get("ready_lines", [])
-
-            if not ready_lines:
-                return JsonResponse(
-                    {"detail": "Preview contains no valid rows to import"}, status=400
-                )
-
-            created_count = 0
-            errors = []
-            preview_rows = []
-
-            next_line = (
-                SalesOrderLineItem.objects.filter(order=sales_order).aggregate(
-                    max_line=Max("line_int")
-                )["max_line"]
-                or 0
-            ) + 1
-
-            with transaction.atomic():
-                for item in ready_lines:
-                    row = item.get("row")
-                    product_name = item.get("input", "")
-                    part_id = item.get("part_id")
-                    quantity_str = item.get("quantity")
-
-                    try:
-                        part = Part.objects.get(pk=part_id)
-                        quantity = Decimal(str(quantity_str))
-                    except Exception as exc:
-                        errors.append({
-                            "row": row,
-                            "product_name": product_name,
-                            "error": str(exc),
-                        })
-                        preview_rows.append({
-                            "row": row,
-                            "input": product_name,
-                            "quantity": str(quantity_str),
-                            "status": "error",
-                            "reason": str(exc),
-                            "matched_ipn": None,
-                            "matched_name": None,
-                        })
-                        continue
-
-                    line = SalesOrderLineItem(
-                        order=sales_order,
-                        part=part,
-                        quantity=quantity,
-                        line=str(next_line),
-                        reference="Imported item",
-                    )
-
-                    try:
-                        line.full_clean()
-                        line.save()
-                        next_line += 1
-                        created_count += 1
-                        preview_rows.append({
-                            "row": row,
-                            "input": product_name,
-                            "quantity": str(quantity),
-                            "status": "imported",
-                            "reason": None,
-                            "matched_ipn": part.IPN,
-                            "matched_name": part.name,
-                        })
-                    except ValidationError as exc:
-                        errors.append({
-                            "row": row,
-                            "product_name": product_name,
-                            "error": str(exc),
-                        })
-                        preview_rows.append({
-                            "row": row,
-                            "input": product_name,
-                            "quantity": str(quantity),
-                            "status": "error",
-                            "reason": str(exc),
-                            "matched_ipn": part.IPN,
-                            "matched_name": part.name,
-                        })
-
-            cache.delete(self._preview_cache_key(preview_token))
-
-            return JsonResponse(
-                {
-                    "dry_run": False,
-                    "created_count": created_count,
-                    "would_create_count": 0,
-                    "skipped_count": 0,
-                    "errors": errors,
-                    "unresolved": [],
-                    "preview_rows": preview_rows,
-                    "preview_token": None,
-                },
-                status=200,
-            )
 
         if upload is None:
             return JsonResponse({"detail": "No file uploaded"}, status=400)
@@ -386,7 +251,6 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
         errors = []
         unresolved = []
         preview_rows = []
-        ready_lines = []
 
         next_line = (
             SalesOrderLineItem.objects.filter(order=sales_order).aggregate(
@@ -508,13 +372,6 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
                         line.save()
                         next_line += 1
                         created_count += 1
-
-                    ready_lines.append({
-                        "row": row,
-                        "input": product_name,
-                        "part_id": part.pk,
-                        "quantity": str(quantity),
-                    })
                 except ValidationError as exc:
                     skipped_count += 1
                     errors.append({
@@ -529,15 +386,6 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
             if dry_run:
                 transaction.set_rollback(True)
 
-        dry_run_token = None
-
-        if dry_run and ready_lines:
-            dry_run_token = self._store_preview(
-                user_id=request.user.id,
-                sales_order_id=sales_order.pk,
-                ready_lines=ready_lines,
-            )
-
         return JsonResponse(
             {
                 "dry_run": dry_run,
@@ -547,7 +395,6 @@ class SOLineItemImport(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin)
                 "errors": errors,
                 "unresolved": unresolved,
                 "preview_rows": preview_rows,
-                "preview_token": dry_run_token,
             },
             status=200,
         )

@@ -44,13 +44,19 @@ The plugin adds an "Import Sales Order Lines" panel on Sales Order detail pages.
 
 1. Click "Upload Excel" and select a file.
 2. The plugin runs a dry-run preview first (no data is written).
-3. Review the preview table and summary.
-4. Click "Add to SO" to create Sales Order line items from the validated preview.
+3. Review the preview table (shown as a modal-style preview view in the panel) and summary.
+4. Click "Add to SO" to create Sales Order line items.
 
 Notes:
 
 - "Add to SO" is enabled only after a successful dry-run.
-- The dry-run preview token is short-lived (15 minutes). If expired, upload again.
+- The Excel file is validated twice:
+	- once during dry-run preview
+	- again when "Add to SO" is clicked
+- Because validation is repeated against live database state, the final created lines can differ from what the preview table showed if data changed between preview and import.
+- This can happen if another user updates data, but also if the same user updates data in another browser tab and then returns to the preview tab.
+- The "Import Summary" will show what has actually been added to the Sales Order, and what has been skipped.
+- If you make data changes and want to verify the expected result, upload the Excel file again before clicking "Add to SO".
 
 ### Excel Format
 
@@ -101,6 +107,6 @@ These rows are marked in the preview table with a reason.
 The dry-run preview includes:
 
 - summary counts (would create, skipped)
-- row-level preview table with status, matched part, quantity, and reason
+- row-level preview table (modal-style preview view) with status, matched part, quantity, and reason
 
-Up to 50 rows are shown in the panel table.
+Up to 50 rows are shown in the panel table. If the file contains more than 50 rows, all rows are still processed and will be added to the SO.
